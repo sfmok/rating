@@ -1,34 +1,65 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    phps.url = "github:fossar/nix-phps";
     devenv.url = "github:cachix/devenv";
+    phps.url = "github:loophp/nix-shell";
     systems.url = "github:nix-systems/default";
   };
 
-  outputs = inputs @ { self, flake-parts, ... }: flake-parts.lib.mkFlake { inherit inputs; } {
-    systems = import inputs.systems;
+  outputs = inputs @ {
+    flake-parts,
+    systems,
+    ...
+  }:
+    flake-parts.lib.mkFlake {inherit inputs;} {
+      imports = [inputs.devenv.flakeModule];
+      systems = import systems;
 
-    imports = [
-      inputs.devenv.flakeModule
-    ];
+      perSystem = {system, ...}: let
+        pkgs = import inputs.nixpkgs {
+          inherit system;
+          overlays = [inputs.phps.overlays.default];
+        };
 
-    perSystem = { config, self', inputs', pkgs, system, lib, ... }: {
-      _module.args.pkgs = import self.inputs.nixpkgs {
-        inherit system;
-        overlays = [
-          inputs.phps.overlays.default
-        ];
-      };
-
-      devenv.shells.default = {
-        name = "php-dev-env";
-
+        php = pkgs.api.buildPhpFromComposer {
+          php = pkgs.php82;
+          src = inputs.self;
+          withExtensions = ["xdebug" "opcache"];
+        };
         packages = [
-          pkgs.php82
-          pkgs.php82.packages.composer
+          php
+          php.packages.composer
+          pkgs.symfony-cli
         ];
+      in {
+        formatter = pkgs.alejandra;
+        devenv.shells = {
+          default = {
+            # https://devenv.sh/reference/options/
+            inherit packages;
+            dotenv.disableHint = true;
+            processes.symfony.exec = "symfony serve";
+            services = {
+              mysql = {
+                enable = true;
+                package = pkgs.mysql80;
+                ensureUsers = [
+                  {
+                    name = "vico_rating";
+                    password = "vico_rating";
+                    ensurePermissions = {
+                      "vico_rating.*" = "ALL PRIVILEGES";
+                    };
+                  }
+                ];
+
+                initialDatabases = [
+                  {name = "vico_rating";}
+                ];
+              };
+            };
+          };
+        };
       };
     };
-  };
 }
